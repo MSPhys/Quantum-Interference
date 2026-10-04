@@ -4,6 +4,8 @@ A live wave-interference visualiser whose source positions, frequencies,
 phases and amplitudes are set by real quantum measurements from Moth
 Quantum's `coin-toss-v1` engine (Atlas API).
 
+Each wave source's position, frequency, phase and amplitude is built from 8 fair quantum bits (256 possible values per parameter). With up to 6 sources and 5 parameters each, the odds of two renders ever landing on the exact same underlying measurement sequence are roughly 1 in 10⁷³ — for comparison, the observable universe is estimated to contain "only" about 10⁸⁰ atoms. In practice, you will never see the same pattern twice.
+
 ## Requirements
 
 | Requirement        | Version / Notes                          |
