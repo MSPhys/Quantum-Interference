@@ -35,8 +35,8 @@
 <div class="hud">
   <div class="panel">
     <h1>Measured Interference</h1>
-    <div class="sub">Several wave sources, each one's position, frequency and phase set by quantum measurement, summed into one interference field.</div>
-    <button id="regen" style="margin-top:8px;">Re-measure sources</button>
+    <div class="sub">Several wave sources, each one's position, frequency and phase set by quantum measurement, summed into one interference field. Re-measures automatically, live, every few seconds.</div>
+    <button id="regen" style="margin-top:8px;">Re-measure now</button>
   </div>
   <div class="panel stat">
     sources <b id="scount">0</b><br>
@@ -51,10 +51,10 @@
   var ctx = canvas.getContext('2d');
   var N = 260; // internal resolution, scaled up via CSS for crisp interference bands
 
-  // LIVE version: calls a local backend (server.py) on every render, which
-  // itself calls Moth's real coin-toss-v1 API and returns a fresh batch of
-  // measured bits. Requires running `python server.py` and opening this page
-  // via http://localhost:5000 (not as a static file) -- see server.py.
+  // LIVE version: calls a local/deployed backend (server.py) which itself
+  // calls Moth's real coin-toss-v1 API and returns a fresh batch of measured
+  // bits. Requires running `python server.py` (or the deployed URL) -- see
+  // server.py / README.md for setup.
   var REAL_BITS = [], realIdx = 0;
   var measurementCount = 0;
   var fetching = false;
@@ -62,7 +62,7 @@
   function rawBit(){
     measurementCount++;
     if(realIdx < REAL_BITS.length) return REAL_BITS[realIdx++];
-    return Math.random() < 0.5 ? 1 : 0; // fallback only if the live fetch hasn't landed yet
+    return Math.random() < 0.5 ? 1 : 0; // fallback only if a live fetch hasn't landed yet
   }
   function measureBit(prob){
     if(prob===undefined) prob = 0.5;
@@ -77,17 +77,15 @@
 
   async function fetchFreshBits(){
     fetching = true;
-    document.getElementById('src').textContent = 'measuring live…';
     try{
       var r = await fetch('/api/measure');
       var d = await r.json();
-      if(d.bits){ REAL_BITS = d.bits; realIdx = 0;
-        document.getElementById('src').textContent = 'quantum LIVE (' + d.backend + ', job ' + d.job_id.slice(0,8) + '…)'; }
-      else { document.getElementById('src').textContent = 'live call failed, see console'; console.error(d); }
+      if(d.bits){ REAL_BITS = d.bits; realIdx = 0; fetching = false; return d; }
+      else { console.error(d); fetching = false; return null; }
     }catch(e){
-      document.getElementById('src').textContent = 'server not reachable (run server.py)';
+      fetching = false;
+      return null;
     }
-    fetching = false;
   }
 
   var PALETTE = [[110,168,255],[255,140,170],[140,255,200],[255,210,110]];
@@ -108,12 +106,18 @@
     return sources;
   }
 
-  function render(){
-    measurementCount = 0;
-    var sources = makeSources();
-    document.getElementById('scount').textContent = sources.length;
+  // --- continuous live animation + auto re-measurement ---
+  var pageStart = performance.now();
+  var currentSources = [], prevSources = [];
+  var lastMeasureT = 0;
+  var transitionDur = 900;   // ms to crossfade between old and new pattern
+  var animSpeed = 0.0022;    // phase units per ms -- how fast the ripple moves
+  var jobsCalled = 0;
 
-    var img = ctx.createImageData(N, N);
+  // Raw wave field for ONE set of sources at time t -- no canvas write yet,
+  // so two fields can be blended together for a smooth crossfade.
+  function computeField(sources, t){
+    var buf = new Float32Array(N*N*3);
     for(var y=0;y<N;y++){
       for(var x=0;x<N;x++){
         var r=0,g=0,b=0,wsum=0;
@@ -121,29 +125,73 @@
           var src = sources[s];
           var dx = x-src.x, dy = y-src.y;
           var dist = Math.sqrt(dx*dx+dy*dy);
-          var wave = Math.sin(dist*src.freq - src.phase) * src.amp; // -amp..amp
-          var w = Math.max(0, wave); // constructive contribution only, per source
+          var effPhase = src.phase + t*animSpeed;
+          var wave = Math.sin(dist*src.freq - effPhase) * src.amp;
+          var w = Math.max(0, wave);
           r += src.col[0]*w; g += src.col[1]*w; b += src.col[2]*w; wsum += w;
         }
         var norm = wsum>0 ? 1/Math.max(1,wsum*0.6) : 0;
-        var idx = (y*N+x)*4;
-        img.data[idx]   = Math.min(255, r*norm);
-        img.data[idx+1] = Math.min(255, g*norm);
-        img.data[idx+2] = Math.min(255, b*norm);
-        img.data[idx+3] = 255;
+        var idx = (y*N+x)*3;
+        buf[idx]=Math.min(255,r*norm); buf[idx+1]=Math.min(255,g*norm); buf[idx+2]=Math.min(255,b*norm);
+      }
+    }
+    return buf;
+  }
+
+  function drawFrame(t){
+    if(!currentSources.length) return;
+    var elapsed = t - lastMeasureT;
+    var newField = computeField(currentSources, t);
+    var img = ctx.createImageData(N, N);
+
+    if(elapsed < transitionDur && prevSources.length){
+      var oldField = computeField(prevSources, t);
+      var alpha = elapsed/transitionDur; // 0 = all old, 1 = all new
+      for(var i=0;i<N*N;i++){
+        var p=i*3, q=i*4;
+        img.data[q]   = oldField[p]  *(1-alpha) + newField[p]  *alpha;
+        img.data[q+1] = oldField[p+1]*(1-alpha) + newField[p+1]*alpha;
+        img.data[q+2] = oldField[p+2]*(1-alpha) + newField[p+2]*alpha;
+        img.data[q+3] = 255;
+      }
+    } else {
+      for(var i=0;i<N*N;i++){
+        var p=i*3, q=i*4;
+        img.data[q]=newField[p]; img.data[q+1]=newField[p+1]; img.data[q+2]=newField[p+2]; img.data[q+3]=255;
       }
     }
     ctx.putImageData(img, 0, 0);
-    document.getElementById('mcount').textContent = measurementCount;
   }
 
+  // A real measurement: genuine API call, fresh sources, old ones kept for
+  // the crossfade so the transition is smooth rather than a hard cut.
   async function liveRender(){
     if(fetching) return;
-    await fetchFreshBits();
-    render();
+    document.getElementById('src').textContent = 'measuring live…';
+    var d = await fetchFreshBits();
+    if(!d){ document.getElementById('src').textContent = 'server not reachable'; return; }
+
+    measurementCount = 0;
+    prevSources = currentSources;
+    currentSources = makeSources();
+    lastMeasureT = performance.now() - pageStart;
+    jobsCalled++;
+
+    document.getElementById('scount').textContent = currentSources.length;
+    document.getElementById('mcount').textContent = measurementCount;
+    document.getElementById('src').textContent =
+      'quantum LIVE (' + d.backend + ') — jobs called: ' + jobsCalled;
   }
+
   document.getElementById('regen').addEventListener('click', liveRender);
-  liveRender();
+
+  (function loop(now){
+    drawFrame(now - pageStart);
+    requestAnimationFrame(loop);
+  })(performance.now());
+
+  liveRender();                   // first real measurement on load
+  setInterval(liveRender, 6000);  // then automatically, every 6 seconds
 })();
 </script>
 </body>
