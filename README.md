@@ -1,4 +1,7 @@
 # Measured Interference
+🔴 Live demo: quantum-wave-interference.onrender.com
+
+Note: hosted on Render's free tier, which spins down when idle. The first load after a period of inactivity can take 20–30 seconds to wake up — this is normal, not a bug. Watch the "source" label go from classical (demo) → measuring live… → quantum LIVE (aer) — jobs called: N.
 
 A live wave-interference visualiser whose source positions, frequencies,
 phases and amplitudes are set by real quantum measurements from Moth
